@@ -30,12 +30,14 @@ targetCompatibility = javaVersion
 // with Groovy and statically references third-party class junit.framwork.AssertionFailedError)
 tasks.withType(GroovyCompile) {
 	groovyClasspath += configurations.junit
+//  options.forkOptions.jvmArgs = ['-agentlib:jdwp=transport=dt_socket,server=y,suspend=y,address=5005']
 }
 
 ext.spockLogFileDir = file("$buildDir/spock/logFiles")
 ext.spockLogFileName = "spock-log"
 
 test {
+//  jvmArgs '-agentlib:jdwp=transport=dt_socket,server=y,suspend=y,address=5005'
   finalizedBy "spockReport"
   reports.junitXml.enabled = true
   reports.html.enabled = false

@@ -240,8 +240,87 @@ public class SpecRewriter extends AbstractSpecVisitor implements IRewriteResourc
       AstUtil.setVisibility(method.getAst(), Opcodes.ACC_PRIVATE);
     } else if (method instanceof FeatureMethod) {
       transplantMethod(method);
+      renameWhereDataTableVariables(method);
       handleWhereBlock(method);
     }
+  }
+
+  private void renameWhereDataTableVariables(Method method) {
+    if (!(method.getLastBlock() instanceof WhereBlock)) {
+      return;
+    }
+
+    Map<String, String> newNames = collectWhereBlockVariables((WhereBlock) method.getLastBlock());
+
+    String methodName = method.getName();
+    for (String name : newNames.keySet()) {
+      if (methodName.contains("#" + name)) {
+        methodName = methodName.replace("#" + name, "#" + newNames.get(name));
+      }
+    }
+    method.setName(methodName);
+
+    RenameWhereVariablesVisitor visitor = new RenameWhereVariablesVisitor(newNames);
+    method.getBlocks().forEach(stm -> stm.getAst().forEach(ast -> ast.visit(visitor)));
+    visitor.visitMethod(method.getAst());
+  }
+
+  private Map<String, String> collectWhereBlockVariables(WhereBlock whereBlock) {
+    if (whereBlock.getAst().size() == 0) {
+      return new HashMap<>();
+    }
+    Map<String, String> variableNames = new HashMap<>();
+    Stack<BinaryExpression> binaryExpressions = new Stack<>();
+    List<Statement> statements = whereBlock.getAst();
+    Statement firstStatement = statements.get(0);
+    if (firstStatement instanceof ExpressionStatement) {
+      Expression expression = ((ExpressionStatement) firstStatement).getExpression();
+      if (expression instanceof BinaryExpression && ((BinaryExpression) expression).getOperation().getType() == Types.PIPE) {
+        binaryExpressions.push((BinaryExpression) expression);
+      }
+    }
+
+    String baseName = whereBlock.getParent().getAst().getName().replace("$", "");
+    while (!binaryExpressions.isEmpty()) {
+      BinaryExpression current = binaryExpressions.pop();
+
+      Pair<String, String> variableName = collectAndRenameVariableNames(current.getRightExpression(), baseName);
+      if (variableName != null) {
+        variableNames.put(variableName.first(), variableName.second());
+        current.setRightExpression(renameVariableExpression((VariableExpression) current.getRightExpression(), variableName.second()));
+      }
+
+      variableName = collectAndRenameVariableNames(current.getLeftExpression(), baseName);
+      if (variableName != null) {
+        variableNames.put(variableName.first(), variableName.second());
+        current.setLeftExpression(renameVariableExpression((VariableExpression) current.getLeftExpression(), variableName.second()));
+      }
+
+      if (current.getLeftExpression() instanceof BinaryExpression) {
+        binaryExpressions.push((BinaryExpression) current.getLeftExpression());
+      }
+    }
+
+    return variableNames;
+  }
+
+  private VariableExpression renameVariableExpression(VariableExpression original, String newName) {
+    VariableExpression newExpression = new VariableExpression(newName);
+    if (original.getAccessedVariable() instanceof Parameter) {
+      newExpression.setAccessedVariable(new Parameter(original.getAccessedVariable().getType(), newName));
+    } else {
+      newExpression.setAccessedVariable(new DynamicVariable(newName, false));
+    }
+    return newExpression;
+  }
+
+  private Pair<String, String> collectAndRenameVariableNames(Expression expression, String baseName) {
+    if (expression instanceof VariableExpression && !((VariableExpression) expression).getName().equals("_")) {
+      String name = ((VariableExpression) expression).getName();
+      String newName = baseName + "_" + name;
+      return Pair.of(name, newName);
+    }
+    return null;
   }
 
   private void checkFieldAccessInFixtureMethod(Method method) {
